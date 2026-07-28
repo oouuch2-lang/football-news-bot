@@ -43,8 +43,9 @@ CLOUDFLARE_MODEL = os.environ.get("CLOUDFLARE_MODEL") or "@cf/black-forest-labs/
 # --- Файл с историей опубликованных новостей (чтобы не постить одну новость дважды) ---
 HISTORY_FILE = os.environ.get("HISTORY_FILE") or "data/published_history.json"
 
-# --- Переписывание текста через Gemini API (опционально) ---
-# Без ключа новости публикуются как есть (заголовок+описание с RSS, на языке источника).
+# --- Переписывание текста через Gemini API ---
+# Посты — только на русском. Без ключа (или при сбое Gemini) main.py не публикует
+# новость вообще, а не откатывается на оригинальный текст с RSS — см. publish_news().
 # Ключ бесплатный, получить на https://aistudio.google.com/apikey.
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
 GEMINI_MODEL = os.environ.get("GEMINI_MODEL") or "gemini-3.5-flash"
