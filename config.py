@@ -47,7 +47,7 @@ HISTORY_FILE = os.environ.get("HISTORY_FILE") or "data/published_history.json"
 # Без ключа новости публикуются как есть (заголовок+описание с RSS, на языке источника).
 # Ключ бесплатный, получить на https://aistudio.google.com/apikey.
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
-GEMINI_MODEL = os.environ.get("GEMINI_MODEL") or "gemini-2.5-flash"
+GEMINI_MODEL = os.environ.get("GEMINI_MODEL") or "gemini-3.5-flash"
 
 # --- Telegram-аккаунт владельца бота (для статистики и уведомлений в личку) ---
 # Числовой ID, не @username. Свой ID можно узнать, написав боту @userinfobot.
