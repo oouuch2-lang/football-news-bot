@@ -74,13 +74,17 @@ def _build_caption(title: str, summary: str) -> str:
     return caption
 
 
-async def main() -> None:
+async def main() -> int:
+    """Один прогон: публикует новое и возвращает, сколько постов вышло —
+    нужно вызывающему коду (например, кнопке "Опубликовать сейчас" в
+    admin_agent.py), чтобы честно сказать, было что-то новое или нет."""
     news_items = news_parser.get_fresh_news()[:config.MAX_NEWS_PER_RUN]
     if not news_items:
         print("Новых новостей нет.")
-        return
+        return 0
 
     history = news_parser.load_history()
+    published = 0
     # async with обязателен: без него у Bot не инициализируется HTTP-клиент
     # правильно, и при отправке больше одного поста подряд соединения зависают
     # (пул на 1 соединение по умолчанию у python-telegram-bot).
@@ -89,11 +93,13 @@ async def main() -> None:
             try:
                 if await publish_news(bot, item):
                     history[item["link"]] = datetime.now(timezone.utc).isoformat()
+                    published += 1
                     print(f"Опубликовано: {item['title']}")
             except Exception as e:
                 print(f"Не удалось опубликовать новость '{item['title']}': {e}")
 
     news_parser.save_history(history)
+    return published
 
 
 if __name__ == "__main__":

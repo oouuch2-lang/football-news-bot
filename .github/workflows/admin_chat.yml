@@ -27,7 +27,9 @@ jobs:
         env:
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
           CHANNEL_ID: ${{ secrets.CHANNEL_ID }}
+          RSS_URLS: ${{ secrets.RSS_URLS }}
           ADMIN_CHAT_ID: ${{ secrets.ADMIN_CHAT_ID }}
+          MAX_NEWS_PER_RUN: ${{ vars.MAX_NEWS_PER_RUN }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           GEMINI_MODEL: ${{ vars.GEMINI_MODEL }}
           IMAGE_PROVIDER: ${{ vars.IMAGE_PROVIDER }}
@@ -35,13 +37,19 @@ jobs:
           HUGGINGFACE_MODEL: ${{ vars.HUGGINGFACE_MODEL }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          BRAND_PRIMARY_COLOR: ${{ vars.BRAND_PRIMARY_COLOR }}
+          BRAND_BACKGROUND_COLOR: ${{ vars.BRAND_BACKGROUND_COLOR }}
+          BRAND_TEXT_COLOR: ${{ vars.BRAND_TEXT_COLOR }}
+          BRAND_IMAGE_STYLE: ${{ vars.BRAND_IMAGE_STYLE }}
         run: python admin_agent.py
 
       - name: Сохранить настройки и состояние переписки
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          for f in data/admin_state.json data/settings.json; do
+          # data/published_history.json тоже может измениться — кнопка "Опубликовать
+          # сейчас" в чате вызывает тот же main.main(), что и почасовой workflow
+          for f in data/admin_state.json data/settings.json data/published_history.json; do
             [ -f "$f" ] && git add "$f"
           done
           if git diff --cached --quiet; then

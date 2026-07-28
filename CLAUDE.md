@@ -203,7 +203,33 @@ deliberately lazier than building one, and matches what was asked for
 ("веди себя как полноценная нейросеть"). Numeric replies to an open
 `pending` proposal are intercepted by `_parse_choice()` *before* any
 Gemini call — cheaper, and doesn't depend on the model recognizing "2" as
-a selection instead of a new topic.
+a selection instead of a new topic. `_parse_choice()` also bails out
+(returns `None`) on anything longer than 4 words — a long message that
+happens to contain "второй" (e.g. "Второй месяц веду канал, добавь
+эмодзи") must not be silently treated as picking option 2 instead of
+being read as a new request.
+
+### Real Telegram buttons (inline keyboard), same polling mechanism
+
+`/start`, "меню" or "кнопки" sends an `InlineKeyboardMarkup` with four
+buttons (`_menu_keyboard()`): publish now, change avatar now, stats,
+"talk to me about settings". Button taps arrive as `callback_query`
+updates through the *same* `get_updates()` call as text messages
+(`allowed_updates=["message", "callback_query"]`) — no separate
+infrastructure needed, this is still one pull every 5 minutes.
+`_handle_callback()` doesn't trigger a GitHub Actions workflow or need a
+GitHub PAT; it just calls the existing entry-point functions in-process:
+`main.main()` (imported as `news_main` to avoid shadowing `admin_agent`'s
+own concerns), `avatar_manager.set_channel_avatar()`,
+`stats.send_stats()`. `main.main()` now returns the published count
+(previously `None`) so the button's confirmation message can say "0
+опубликовано" honestly instead of always claiming success. Because the
+publish button can now touch `data/published_history.json` from *this*
+workflow too, `admin_chat.yml`'s commit step commits that file as well as
+`admin_state.json`/`settings.json`, and `admin_chat.yml`'s env block was
+brought to parity with `telegram_bot.yml` (`RSS_URLS`, `MAX_NEWS_PER_RUN`,
+`BRAND_*`) — the publish button exercises the exact same code path as the
+hourly run and needs the same inputs.
 
 ## Image/text providers deliberately NOT integrated
 

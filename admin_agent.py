@@ -6,6 +6,11 @@ Gemini разбирает намерение и придумывает 2-3 ко�
 и правит data/settings.json (цвета, стиль, тон текста, частота, RSS-ленты
 — см. bot_settings.py), и меняет саму аватарку канала.
 
+Также есть меню с настоящими Telegram-кнопками (по "/start", "меню" или
+"кнопки"): «Опубликовать сейчас», «Сменить аватарку», «Статистика»,
+«Оформление» — те же действия, что и ручной запуск main.py/avatar_manager.py/
+stats.py с вкладки Actions на GitHub, только сразу из чата.
+
 Отдельный скрипт, запускается по расписанию (.github/workflows/admin_chat.yml)
 каждые 5 минут через getUpdates (не webhook — не нужен постоянно работающий
 сервер, вписывается в ту же "проснулся-сделал-уснул" модель, что и остальные
@@ -22,17 +27,21 @@ import os
 import random
 import re
 
-from telegram import Bot
+from telegram import Bot, InlineKeyboardButton, InlineKeyboardMarkup
 
+import avatar_manager
 import bot_settings
 import brand_config
 import config
 import gemini_client
 import image_generator
 import image_processor
+import main as news_main
+import stats
 
 STATE_FILE = "data/admin_state.json"
 MAX_HISTORY = 12
+MENU_TRIGGERS = {"/start", "меню", "menu", "кнопки"}
 
 
 def _load_state() -> dict:
@@ -118,6 +127,42 @@ category "chat", "options": null, "avatar_prompts": null, и просто отв
 не попадут — такие ответы на уже предложенные варианты перехватываются раньше."""
 
 
+def _menu_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("📰 Опубликовать новости сейчас", callback_data="publish")],
+        [InlineKeyboardButton("🖼 Сменить аватарку", callback_data="avatar_now")],
+        [InlineKeyboardButton("📊 Статистика", callback_data="stats")],
+        [InlineKeyboardButton("🎨 Оформление / тон / ленты", callback_data="style")],
+    ])
+
+
+async def _send_menu(bot: Bot, chat_id: int) -> None:
+    await bot.send_message(chat_id=chat_id, text="Что сделать?", reply_markup=_menu_keyboard())
+
+
+async def _handle_callback(bot: Bot, chat_id: int, action: str) -> None:
+    """Обрабатывает нажатие кнопки меню — те же действия, что и ручной запуск
+    main.py / avatar_manager.py / stats.py, только без похода на вкладку Actions."""
+    if action == "publish":
+        await bot.send_message(chat_id=chat_id, text="Проверяю ленты…")
+        published = await news_main.main()
+        text = f"Готово ✅ Опубликовано новостей: {published}." if published else "Готово, новых новостей не нашлось."
+        await bot.send_message(chat_id=chat_id, text=text)
+    elif action == "avatar_now":
+        await bot.send_message(chat_id=chat_id, text="Генерирую новую аватарку…")
+        ok = await avatar_manager.set_channel_avatar()
+        text = "Готово, аватарка обновлена ✅" if ok else "Не получилось — провайдер картинок сейчас недоступен, попробуй позже."
+        await bot.send_message(chat_id=chat_id, text=text)
+    elif action == "stats":
+        await stats.send_stats()
+    elif action == "style":
+        await bot.send_message(
+            chat_id=chat_id,
+            text="Напиши, что хочешь поменять — цвета, стиль картинок, тон текста, "
+                 "частоту публикаций или RSS-ленты — и я предложу варианты.",
+        )
+
+
 async def _apply_avatar_choice(bot: Bot, option: dict) -> str:
     image_bytes = image_generator.generate_image(option["prompt"], seed=option["seed"])
     if not image_bytes:
@@ -145,6 +190,11 @@ async def _offer_avatar_options(bot: Bot, chat_id: int, prompts: list) -> list:
 
 
 async def _handle_message(bot: Bot, chat_id: int, state: dict, settings: dict, user_text: str) -> None:
+    if user_text.strip().lower() in MENU_TRIGGERS:
+        state["pending"] = None
+        await _send_menu(bot, chat_id)
+        return
+
     pending = state.get("pending")
 
     if pending:
@@ -214,9 +264,24 @@ async def run() -> None:
     settings = bot_settings.load()
 
     async with Bot(token=config.TELEGRAM_TOKEN) as bot:
-        updates = await bot.get_updates(offset=state["last_update_id"] + 1, timeout=0, allowed_updates=["message"])
+        updates = await bot.get_updates(
+            offset=state["last_update_id"] + 1, timeout=0, allowed_updates=["message", "callback_query"]
+        )
         for update in updates:
             state["last_update_id"] = update.update_id
+
+            if update.callback_query:
+                query = update.callback_query
+                if query.message is None or query.message.chat_id != admin_chat_id:
+                    continue
+                await query.answer()  # убирает "часики" на кнопке в Telegram
+                try:
+                    await _handle_callback(bot, admin_chat_id, query.data)
+                except Exception as e:
+                    print(f"Не удалось обработать нажатие кнопки: {e}")
+                    await bot.send_message(chat_id=admin_chat_id, text="Что-то пошло не так, попробуй ещё раз.")
+                continue
+
             message = update.message
             if not message or not message.text or message.chat_id != admin_chat_id:
                 continue
