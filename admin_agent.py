@@ -274,8 +274,8 @@ async def run() -> None:
                 query = update.callback_query
                 if query.message is None or query.message.chat_id != admin_chat_id:
                     continue
-                await query.answer()  # убирает "часики" на кнопке в Telegram
                 try:
+                    await query.answer()  # убирает "часики" на кнопке в Telegram
                     await _handle_callback(bot, admin_chat_id, query.data)
                 except Exception as e:
                     print(f"Не удалось обработать нажатие кнопки: {e}")
