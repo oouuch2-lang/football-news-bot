@@ -11,8 +11,14 @@ import requests
 import config
 
 
-def generate_image(prompt: str) -> bytes | None:
-    """Генерирует картинку способом, выбранным в config.IMAGE_PROVIDER."""
+def generate_image(prompt: str, seed: int | None = None) -> bytes | None:
+    """Генерирует картинку способом, выбранным в config.IMAGE_PROVIDER.
+
+    seed — необязательный, только для pollinations: позволяет почти точно
+    повторить ранее показанную картинку (нужно для превью аватарки —
+    сначала показываем варианты, потом перегенерируем выбранный по тому же
+    seed вместо того, чтобы хранить байты картинки между запусками).
+    """
     if config.IMAGE_PROVIDER == "none":
         return None
 
@@ -27,16 +33,21 @@ def generate_image(prompt: str) -> bytes | None:
         return None
 
     try:
+        if generator is _generate_pollinations:
+            return generator(prompt, seed=seed)
         return generator(prompt)
     except Exception as e:
         print(f"Генерация изображения не удалась ({config.IMAGE_PROVIDER}): {e}")
         return None
 
 
-def _generate_pollinations(prompt: str) -> bytes:
+def _generate_pollinations(prompt: str, seed: int | None = None) -> bytes:
     """Pollinations AI — бесплатно и без ключа, обычный GET-запрос с промптом в URL."""
     url = f"https://image.pollinations.ai/prompt/{requests.utils.quote(prompt)}"
-    response = requests.get(url, params={"width": 1024, "height": 1024, "nologo": "true"}, timeout=60)
+    params = {"width": 1024, "height": 1024, "nologo": "true"}
+    if seed is not None:
+        params["seed"] = seed
+    response = requests.get(url, params=params, timeout=60)
     response.raise_for_status()
     return response.content
 

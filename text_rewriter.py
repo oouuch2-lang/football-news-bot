@@ -7,9 +7,8 @@ rewrite() возвращает None, и вызывающий код публик
 (оригинальный заголовок и описание с RSS) — точно так же, как
 image_generator ведёт себя при недоступном провайдере картинок.
 """
-import requests
-
-import config
+import bot_settings
+import gemini_client
 
 PROMPT_TEMPLATE = """Перепиши эту спортивную новость для поста в Telegram-канале.
 
@@ -18,7 +17,7 @@ PROMPT_TEMPLATE = """Перепиши эту спортивную новость
 - Никакого канцелярита и штампов.
 - Короткие предложения, до 15 слов.
 - Уместные эмодзи — не более 2-3 на весь пост.
-- Ответь СТРОГО в этом формате, без кавычек и пояснений:
+{extra_rule}- Ответь СТРОГО в этом формате, без кавычек и пояснений:
 Короткий цепляющий заголовок одной строкой
 <пустая строка>
 Текст поста, 2-4 предложения
@@ -29,33 +28,17 @@ PROMPT_TEMPLATE = """Перепиши эту спортивную новость
 
 def rewrite(title: str, summary: str) -> tuple[str, str] | None:
     """Возвращает (заголовок, текст поста) на русском или None, если Gemini недоступен."""
-    if not config.GEMINI_API_KEY:
+    tone = bot_settings.load().get("text_tone")
+    extra_rule = f"- Дополнительное пожелание по стилю: {tone}\n" if tone else ""
+    prompt = PROMPT_TEMPLATE.format(title=title, summary=summary, extra_rule=extra_rule)
+
+    text = gemini_client.generate(prompt)
+    if not text:
         return None
 
-    url = (
-        f"https://generativelanguage.googleapis.com/v1beta/models/"
-        f"{config.GEMINI_MODEL}:generateContent"
-    )
-    prompt = PROMPT_TEMPLATE.format(title=title, summary=summary)
-
-    try:
-        response = requests.post(
-            url,
-            headers={"x-goog-api-key": config.GEMINI_API_KEY},
-            json={"contents": [{"parts": [{"text": prompt}]}]},
-            timeout=30,
-        )
-        response.raise_for_status()
-        text = response.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
-        if not text:
-            return None
-
-        head, _, body = text.partition("\n\n")
-        if not body:
-            # Gemini не разделил заголовок и текст пустой строкой — используем
-            # исходный заголовок RSS, а весь ответ целиком как текст поста
-            return title, text
-        return head.strip(), body.strip()
-    except Exception as e:
-        print(f"Gemini не смог переписать текст: {e}")
-        return None
+    head, _, body = text.partition("\n\n")
+    if not body:
+        # Gemini не разделил заголовок и текст пустой строкой — используем
+        # исходный заголовок RSS, а весь ответ целиком как текст поста
+        return title, text
+    return head.strip(), body.strip()

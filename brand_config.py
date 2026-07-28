@@ -5,14 +5,21 @@
 """
 import os
 
+import bot_settings
+
 # os.environ.get(key) or default — а не get(key, default): GitHub Actions передаёт
 # незаданную repository variable как пустую строку "", а не отсутствующий ключ,
 # так что обычный default сюда не сработал бы (пустой HEX-цвет уронил бы генерацию
 # картинки, а int("")/float("") вообще упали бы с ошибкой при старте).
 
+# Настройки, изменённые перепиской с ботом (admin_agent.py), перекрывают env —
+# см. bot_settings.py. Пока владелец ничего не менял через чат, все значения
+# внутри None, и поведение полностью совпадает с тем, что было до этой фичи.
+_overrides = bot_settings.load()
+
 # --- Цвета (HEX) ---
-PRIMARY_COLOR = os.environ.get("BRAND_PRIMARY_COLOR") or "#1E3A8A"
-BACKGROUND_COLOR = os.environ.get("BRAND_BACKGROUND_COLOR") or "#0F172A"
+PRIMARY_COLOR = _overrides["primary_color"] or os.environ.get("BRAND_PRIMARY_COLOR") or "#1E3A8A"
+BACKGROUND_COLOR = _overrides["background_color"] or os.environ.get("BRAND_BACKGROUND_COLOR") or "#0F172A"
 TEXT_COLOR = os.environ.get("BRAND_TEXT_COLOR") or "#FFFFFF"
 
 # --- Шрифт для заголовка, который рисуется поверх картинки ---
@@ -31,7 +38,8 @@ LOGO_MARGIN = int(os.environ.get("BRAND_LOGO_MARGIN") or "24")  # отступ �
 
 # --- Стиль изображений (описание для промпта ИИ-генератора) ---
 IMAGE_STYLE = (
-    os.environ.get("BRAND_IMAGE_STYLE")
+    _overrides["image_style"]
+    or os.environ.get("BRAND_IMAGE_STYLE")
     or "боке, глубина резкости, естественный свет, телеобъектив, photojournalism, Getty Images style"
 )
 
@@ -64,4 +72,25 @@ def build_image_prompt(headline: str) -> str:
         f"Настоящее фото, снятое на камеру, высокая детализация, реалистичные текстуры. "
         f"НЕ рисунок, НЕ иллюстрация, НЕ мультфильм, НЕ 3D-рендер, НЕ картина. "
         f"Без текста, без надписей, без номеров на форме, без читаемого текста нигде в кадре."
+    )
+
+
+def build_avatar_prompt(extra: str = "") -> str:
+    """Промпт для аватарки канала: крупный план детали, без лиц и формы с номерами
+    (та же логика фотореализма, что в build_image_prompt).
+
+    extra — необязательное уточнение на русском (например, разные варианты,
+    которые предлагает Gemini при смене аватарки через переписку с ботом —
+    см. admin_agent.py). Без extra получается прежний промпт по умолчанию,
+    которым пользуется еженедельная авто-смена в avatar_manager.py.
+    """
+    return (
+        f"Профессиональная спортивная фотография крупным планом для аватарки "
+        f"Telegram-канала: мяч на траве или бутсы футболиста, без лиц и без "
+        f"формы с номерами. {extra} "
+        f"Стиль: {IMAGE_STYLE}. "
+        f"Основной цвет в кадре: {PRIMARY_COLOR}, тон фона: {BACKGROUND_COLOR}. "
+        f"Настоящее фото, снятое на камеру, высокая детализация. "
+        f"НЕ рисунок, НЕ иллюстрация, НЕ мультфильм, НЕ логотип, НЕ эмблема. "
+        f"Без текста и надписей. Хорошо читается в маленьком круглом кадре."
     )

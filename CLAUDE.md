@@ -7,8 +7,10 @@ Telegram bot that autoposts sports news to `@xg_or_not`: pulls RSS feeds
 Gemini, generates a photorealistic branded AI image for each new item,
 overlays the headline and logo, and publishes the post — no source link,
 by requirement. Also rotates the channel avatar weekly and can report
-weekly post stats to the owner's DM. Runs serverless — three independent
-GitHub Actions workflows, no long-running process or host of its own.
+weekly post stats to the owner's DM. The owner can also just chat with
+the bot in DM to change channel style/tone/avatar/feed settings — see
+"Owner chat control" below. Runs serverless — four independent GitHub
+Actions workflows, no long-running process or host of its own.
 
 **Posts are Russian-only, hard requirement — not "prefer Russian, fall
 back to English".** If `text_rewriter.rewrite()` returns `None` (no
@@ -32,32 +34,53 @@ cp .env.example .env   # fill in TELEGRAM_TOKEN, CHANNEL_ID, RSS_URLS
 python main.py          # one run: check RSS feeds, publish anything new
 python avatar_manager.py  # generate + set a new channel avatar
 python stats.py           # print/DM a 7-day post count
+python admin_agent.py     # one run: check owner DM for new messages, act on them
 ```
 
 No test suite, linter, or build step exists in this repo yet.
 
 ## Architecture
 
-Each module has exactly one job. `main.py`, `avatar_manager.py` and
-`stats.py` are three independent entry points, each its own GitHub Actions
-workflow — there is no in-process scheduler and no live bot process; see
-"No live Telegram buttons" below for why.
+Each module has exactly one job. `main.py`, `avatar_manager.py`,
+`stats.py` and `admin_agent.py` are four independent entry points, each
+its own GitHub Actions workflow — there is no in-process scheduler and no
+long-running bot process; see "Owner chat control" below for how that's
+reconciled with a real back-and-forth conversation.
 
 - `config.py` — all runtime settings read from environment variables
   (Telegram token/channel, RSS feed list, which image/text provider to
   use, optional `ADMIN_CHAT_ID` for DMs). Loads `.env` via `python-dotenv`
   if present; on GitHub Actions the same variables come from repo
-  Secrets/Variables instead.
+  Secrets/Variables instead. `RSS_URLS` and `MAX_NEWS_PER_RUN` are
+  overridden by `bot_settings.load()` first if the owner changed them via
+  chat — see `bot_settings.py`.
 - `brand_config.py` — the brand book (colors, font, logo path, image style)
   plus `build_image_prompt()`, which turns a headline into the prompt sent
-  to the image generator. The prompt explicitly tells the model *not* to
-  render text — diffusion models draw text illegibly, so the headline is
-  drawn separately afterward. Also explicitly demands a real photo, not an
-  illustration — free image models default toward a painterly/stylized
-  look unless told "НЕ рисунок, НЕ мультфильм, НЕ 3D-рендер" etc.; even
-  with that, expect an occasional off-topic result (Pollinations has no
-  seed pinning) — that's an accepted quality trade-off of a free
-  generator, not something worth building a verify-and-retry loop for.
+  to the image generator, and `build_avatar_prompt(extra="")`, the same
+  idea for the channel avatar (shared by `avatar_manager.py`'s default
+  weekly rotation and `admin_agent.py`'s chat-driven avatar preview flow).
+  Both prompts explicitly tell the model *not* to render text — diffusion
+  models draw text illegibly, so the headline is drawn separately
+  afterward. Also explicitly demand a real photo, not an illustration —
+  free image models default toward a painterly/stylized look unless told
+  "НЕ рисунок, НЕ мультфильм, НЕ 3D-рендер" etc.; even with that, expect
+  an occasional off-topic result (Pollinations has no seed pinning by
+  default) — that's an accepted quality trade-off of a free generator,
+  not something worth building a verify-and-retry loop for. `PRIMARY_COLOR`,
+  `BACKGROUND_COLOR` and `IMAGE_STYLE` are overridden by `bot_settings.load()`
+  first, same pattern as `config.py`.
+- `bot_settings.py` — `load()`/`save()` for `data/settings.json`, the one
+  file `admin_agent.py` writes to change channel behavior (colors, image
+  style, text tone, RSS feeds, posts-per-run). Every key defaults to
+  `None` ("owner hasn't touched this"), so as long as the owner never
+  chats with the bot, every other module's `_overrides["x"] or <old
+  default>` pattern is a no-op and behavior is identical to before this
+  file existed.
+- `gemini_client.py` — the one place that calls the Gemini
+  `generateContent` endpoint (`generate(prompt, json_mode=False)`),
+  shared by `text_rewriter.py` (plain text) and `admin_agent.py`
+  (`json_mode=True`, structured decisions). Returns `None` on missing key
+  or any request failure — callers own the degrade behavior.
 - `news_parser.py` — parses the configured RSS feeds and filters out
   anything already in `data/published_history.json` (dedup by link).
   History is `{link: iso_timestamp}`; old runs may have left a plain list
@@ -65,17 +88,21 @@ workflow — there is no in-process scheduler and no live bot process; see
   those entries as timestamp-less (excluded from the weekly stats count but
   still deduped correctly). Also unescapes HTML entities feeds sometimes
   double-encode (e.g. Sky Sports serving literal `&#8217;` instead of `’`).
-- `text_rewriter.py` — `rewrite(title, summary)` optionally calls the
-  Gemini API to turn the (usually English) RSS text into a short, casual
-  Russian post — returns `(title, body)` or `None` if `GEMINI_API_KEY` is
-  unset or the call fails, same graceful-degrade contract as
+- `text_rewriter.py` — `rewrite(title, summary)` calls `gemini_client` to
+  turn the (usually English) RSS text into a short, casual Russian post,
+  folding in `bot_settings.load()["text_tone"]` as an extra instruction if
+  the owner set one via chat — returns `(title, body)` or `None` if
+  Gemini is unset/fails, same graceful-degrade contract as
   `image_generator`. The AI image prompt still uses the *original* title,
   not the Gemini rewrite — diffusion models follow English prompts better.
-- `image_generator.py` — `generate_image(prompt)` dispatches to whichever
-  backend `config.IMAGE_PROVIDER` selects: `pollinations` (default, no key
-  needed), `huggingface`, `cloudflare`, or `none`. Any failure from the
-  backend is caught here and turned into `None` — the caller never needs to
-  handle provider-specific errors, a missing image is just a normal outcome.
+- `image_generator.py` — `generate_image(prompt, seed=None)` dispatches to
+  whichever backend `config.IMAGE_PROVIDER` selects: `pollinations`
+  (default, no key needed, the only one that honors `seed`), `huggingface`,
+  `cloudflare`, or `none`. Any failure from the backend is caught here and
+  turned into `None` — the caller never needs to handle provider-specific
+  errors, a missing image is just a normal outcome. `seed` exists so
+  `admin_agent.py` can regenerate a near-identical copy of a previously
+  shown avatar preview without having to persist image bytes between runs.
 - `image_processor.py` — `apply_branding()` draws the headline onto a
   translucent band (Pillow) using the brand font/colors, then overlays the
   logo if `assets/logo.png` exists; `apply_logo_only()` is the same minus
@@ -90,11 +117,13 @@ workflow — there is no in-process scheduler and no live bot process; see
   happen inside `async with Bot(...) as bot:` — see the pool-exhaustion
   note below, this isn't optional decoration.
 - `avatar_manager.py` — generates an avatar-appropriate image (square,
-  no headline), logo-overlays it, and calls `set_chat_photo`. Independent
-  weekly schedule (`.github/workflows/avatar.yml`), no history/dedup needed.
+  no headline) via `brand_config.build_avatar_prompt()`, logo-overlays it,
+  and calls `set_chat_photo`. Independent weekly schedule
+  (`.github/workflows/avatar.yml`), no history/dedup needed.
 - `stats.py` — counts links in history with a timestamp inside the last 7
   days, DMs the owner if `ADMIN_CHAT_ID` is set, otherwise just prints
   (visible in the Actions log). Manual-trigger-only workflow.
+- `admin_agent.py` — see "Owner chat control" below.
 
 ## Pitfalls already hit once — don't reintroduce them
 
@@ -125,17 +154,56 @@ workflow — there is no in-process scheduler and no live bot process; see
   same way once those (never-created) repo Variables were referenced.
   Fix used throughout both files: `os.environ.get(key) or default`.
 
-## No live Telegram buttons — architecture constraint, not an oversight
+## Owner chat control — polling, not webhook, and why
 
-A Telegram inline keyboard needs a process that's alive and polling/
-listening for callback updates in real time. This bot's whole design is
-the opposite: a script that runs for a minute or two on a schedule and
-exits. The two don't compose without paying for (or babysitting) an
-always-on host. Chosen resolution: GitHub Actions `workflow_dispatch`
-("Run workflow" button on the Actions tab) stands in for what would have
-been in-chat buttons — see the table in `README.md`. Don't add
-`bot_handlers.py`/long-polling back in without re-deciding this trade-off
-with the user first.
+The owner can DM the bot free-form requests ("сделай оформление ярче",
+"смени аватарку", "постим реже") and get back 2-3 concrete options with
+a working preview (for avatar changes, real generated images); replying
+with a number applies the choice. This looks like it needs a live,
+always-listening bot process (real inline keyboards do), but it doesn't:
+`admin_agent.py` calls `Bot.get_updates(offset=...)` — a pull, not a
+push — once per run, so it fits the same "wake up, do one pass, exit"
+shape as every other workflow here. `.github/workflows/admin_chat.yml`
+runs it every 5 minutes via `workflow_dispatch`+`schedule`, trading up to
+~5 minutes of reply latency for zero hosting cost. This *is* a reversal
+of an earlier decision to skip live buttons entirely (see git history) —
+the owner explicitly asked for conversational control and chose polling
+frequency knowingly; don't reintroduce that old "no interactivity"
+stance without checking with them again.
+
+Two things this design depends on, don't break them separately:
+- **The repo must stay public.** Every-5-minutes cron on a private repo
+  would burn the free Actions minutes budget fast (hourly `main.py` runs
+  already use a good chunk of it); public repos have no minutes cap.
+  Secrets stay hidden regardless of repo visibility — going public was
+  about Actions minutes, not secret exposure.
+- **`admin_agent.py` no-ops entirely if `ADMIN_CHAT_ID` is unset**, and
+  ignores any message whose `chat_id` doesn't match it. This is the only
+  thing standing between "owner-only control" and "first stranger who
+  finds the bot's username in this public repo can repaint the channel" —
+  don't relax that check.
+
+State lives in two files `admin_agent.py` commits back to the repo (same
+pattern `main.py` uses for `data/published_history.json`):
+`data/admin_state.json` (`last_update_id` so old messages aren't
+reprocessed, a short rolling conversation history for Gemini context, and
+`pending` — the options currently on offer, if any) and `data/settings.json`
+(the actual applied overrides, via `bot_settings.py`). Avatar options are
+never persisted as image bytes — `pending.options[i]` stores the prompt
+and a random `seed` instead, and choosing that option calls
+`image_generator.generate_image(prompt, seed=seed)` again to reproduce
+essentially the same picture (Pollinations honors `seed` deterministically
+enough for this).
+
+Gemini decides everything through one JSON-mode call per incoming
+message (`admin_agent._decision_prompt`) — category, a reply string, and
+either `options` (settings patches) or `avatar_prompts` (image prompt
+variations). No hand-coded intent classifier; letting the model decide is
+deliberately lazier than building one, and matches what was asked for
+("веди себя как полноценная нейросеть"). Numeric replies to an open
+`pending` proposal are intercepted by `_parse_choice()` *before* any
+Gemini call — cheaper, and doesn't depend on the model recognizing "2" as
+a selection instead of a new topic.
 
 ## Image/text providers deliberately NOT integrated
 

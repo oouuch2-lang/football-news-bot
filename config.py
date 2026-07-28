@@ -6,6 +6,8 @@ import os
 
 from dotenv import load_dotenv
 
+import bot_settings
+
 load_dotenv()  # если .env есть — подхватит его; если нет (как в GitHub Actions) — просто ничего не сделает
 
 
@@ -21,14 +23,21 @@ def _require(name: str) -> str:
 TELEGRAM_TOKEN = _require("TELEGRAM_TOKEN")
 CHANNEL_ID = _require("CHANNEL_ID")  # например: @my_channel или -1001234567890
 
+# Настройки, изменённые перепиской с ботом (admin_agent.py) — см. bot_settings.py.
+# Пока владелец ничего не менял через чат, все значения внутри None и
+# поведение совпадает с тем, что было до этой фичи.
+_overrides = bot_settings.load()
+
 # --- RSS-ленты, перечисленные через запятую в одной переменной ---
-RSS_URLS = [url.strip() for url in os.environ.get("RSS_URLS", "").split(",") if url.strip()]
+RSS_URLS = _overrides["rss_urls"] or [
+    url.strip() for url in os.environ.get("RSS_URLS", "").split(",") if url.strip()
+]
 
 # --- Сколько новостей публиковать за один запуск (чтобы не выгрузить в канал пачку сразу) ---
 # os.environ.get(key) or default — а не get(key, default): GitHub Actions передаёт
 # незаданную repository variable как пустую строку "", а не отсутствующий ключ,
 # так что обычный default сюда не сработал бы и int("") падал бы с ошибкой.
-MAX_NEWS_PER_RUN = int(os.environ.get("MAX_NEWS_PER_RUN") or "3")
+MAX_NEWS_PER_RUN = _overrides["max_news_per_run"] or int(os.environ.get("MAX_NEWS_PER_RUN") or "3")
 
 # --- Генерация изображений: pollinations (бесплатно, без ключа) | huggingface | cloudflare | none ---
 IMAGE_PROVIDER = (os.environ.get("IMAGE_PROVIDER") or "pollinations").lower()
