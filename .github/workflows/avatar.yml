@@ -34,3 +34,4 @@ jobs:
           BRAND_TEXT_COLOR: ${{ vars.BRAND_TEXT_COLOR }}
           BRAND_IMAGE_STYLE: ${{ vars.BRAND_IMAGE_STYLE }}
         run: python avatar_manager.py
+
