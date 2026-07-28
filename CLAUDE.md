@@ -153,6 +153,20 @@ reconciled with a real back-and-forth conversation.
   pattern in `brand_config.py` would have broken image generation the
   same way once those (never-created) repo Variables were referenced.
   Fix used throughout both files: `os.environ.get(key) or default`.
+- **A brand-new `schedule:` (cron) trigger can sit completely silent for
+  hours on GitHub's side** — `workflow_dispatch` (manual "Run workflow")
+  works instantly the whole time, which makes it look like a bug in this
+  repo when it isn't. Hit this live: `admin_chat.yml` (`*/5 * * * *`) and
+  `telegram_bot.yml` (`0 * * * *`) both registered as `state: active` via
+  the API but produced zero `event=="schedule"` runs for 2.5+ hours after
+  the workflow files were first pushed. This is a known GitHub-side
+  registration lag for freshly added/changed cron schedules (see GitHub
+  Community Discussion #201436) — not something to "fix" by rewriting the
+  workflow YAML. The reported workaround: push any commit to the default
+  branch to force GitHub to resync the schedule; the next `cron` match
+  after that tends to fire normally. If a schedule goes quiet again,
+  check `gh run list` for `event=="schedule"` rows before assuming the
+  bot's code broke.
 
 ## Owner chat control — polling, not webhook, and why
 
