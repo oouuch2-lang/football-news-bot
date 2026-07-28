@@ -20,12 +20,21 @@ from brand_config import build_image_prompt
 MAX_CAPTION_LENGTH = 1024  # ограничение Telegram на подпись к фото
 
 
-async def publish_news(bot: Bot, news_item: dict) -> None:
-    """Готовит и публикует один пост: картинка (если получилось сгенерировать) + текст."""
-    rewritten = text_rewriter.rewrite(news_item["title"], news_item["summary"])
-    display_title, display_body = rewritten or (news_item["title"], news_item["summary"])
+async def publish_news(bot: Bot, news_item: dict) -> bool:
+    """Готовит и публикует один пост: картинка (если получилось сгенерировать) + текст.
 
-    caption = _build_caption(display_title, display_body, news_item["link"])
+    Посты — только на русском. Если Gemini недоступен (нет ключа или сбой API),
+    пост не публикуется вообще (никакого английского запасного варианта) —
+    новость просто останется непрочитанной из истории и будет предпринята
+    попытка снова на следующем запуске. Возвращает True, если пост ушёл.
+    """
+    rewritten = text_rewriter.rewrite(news_item["title"], news_item["summary"])
+    if rewritten is None:
+        print(f"Пропущено (нет русского текста от Gemini): {news_item['title']}")
+        return False
+    display_title, display_body = rewritten
+
+    caption = _build_caption(display_title, display_body)
 
     # Промпт для картинки строим по ОРИГИНАЛЬНОМУ заголовку (обычно на английском —
     # ИИ-генераторы картинок точнее следуют промпту на английском, чем переводу от Gemini.
@@ -41,27 +50,26 @@ async def publish_news(bot: Bot, news_item: dict) -> None:
         await bot.send_photo(chat_id=config.CHANNEL_ID, photo=image_bytes, caption=caption, parse_mode="HTML")
     else:
         await bot.send_message(chat_id=config.CHANNEL_ID, text=caption, parse_mode="HTML")
+    return True
 
 
-def _build_caption(title: str, summary: str, link: str) -> str:
-    """Собирает подпись к посту: жирный заголовок, короткое описание и ссылка на источник.
+def _build_caption(title: str, summary: str) -> str:
+    """Собирает подпись к посту: жирный заголовок и текст. Без ссылок на источник —
+    по требованию канала.
 
-    Telegram в режиме parse_mode="HTML" требует экранировать &, < и > везде,
-    включая ссылку — а RSS-ссылки почти всегда содержат "&" в query-параметрах
-    (?utm_source=rss&...), так что без html.escape отправка падала бы на
-    большинстве новостей.
+    Telegram в режиме parse_mode="HTML" требует экранировать &, < и > везде —
+    без html.escape отправка падала бы на текстах со спецсимволами.
     """
     title = html.escape(title)
-    link = html.escape(link)
     summary = html.escape(summary)
-    caption = f"<b>{title}</b>\n\n{summary}\n\n<a href=\"{link}\">Источник</a>"
+    caption = f"<b>{title}</b>\n\n{summary}"
 
     if len(caption) > MAX_CAPTION_LENGTH:
-        # обрезаем именно описание, а не заголовок и не ссылку
+        # обрезаем именно описание, а не заголовок
         overflow = len(caption) - MAX_CAPTION_LENGTH + 3
         summary = summary[:-overflow]
         summary = re.sub(r"&[#a-zA-Z0-9]*$", "", summary) + "..."  # не обрезать HTML-сущность (&amp; и т.п.) пополам
-        caption = f"<b>{title}</b>\n\n{summary}\n\n<a href=\"{link}\">Источник</a>"
+        caption = f"<b>{title}</b>\n\n{summary}"
 
     return caption
 
@@ -79,9 +87,9 @@ async def main() -> None:
     async with Bot(token=config.TELEGRAM_TOKEN) as bot:
         for item in news_items:
             try:
-                await publish_news(bot, item)
-                history[item["link"]] = datetime.now(timezone.utc).isoformat()
-                print(f"Опубликовано: {item['title']}")
+                if await publish_news(bot, item):
+                    history[item["link"]] = datetime.now(timezone.utc).isoformat()
+                    print(f"Опубликовано: {item['title']}")
             except Exception as e:
                 print(f"Не удалось опубликовать новость '{item['title']}': {e}")
 

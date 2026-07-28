@@ -2,12 +2,22 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-Telegram bot that autoposts sports news to `@xg_or_not`: pulls RSS feeds,
-optionally rewrites the text into casual Russian via Gemini, generates a
-branded AI image for each new item, overlays the headline and logo, and
-publishes the post. Also rotates the channel avatar weekly and can report
+Telegram bot that autoposts sports news to `@xg_or_not`: pulls RSS feeds
+(English-language sources), rewrites the text into casual Russian via
+Gemini, generates a photorealistic branded AI image for each new item,
+overlays the headline and logo, and publishes the post — no source link,
+by requirement. Also rotates the channel avatar weekly and can report
 weekly post stats to the owner's DM. Runs serverless — three independent
 GitHub Actions workflows, no long-running process or host of its own.
+
+**Posts are Russian-only, hard requirement — not "prefer Russian, fall
+back to English".** If `text_rewriter.rewrite()` returns `None` (no
+`GEMINI_API_KEY` or the call fails), `publish_news()` skips the item
+entirely rather than posting the original English RSS text; the link
+isn't added to history, so it's retried on the next scheduled run.
+Practical implication: **without a working `GEMINI_API_KEY`, the bot
+publishes nothing, silently, forever** — that's by design, not a bug to
+"fix" by adding an English fallback back in.
 
 This project is fully isolated from the other bots in the parent workspace
 — its own history file, own `.env`, own git repo. `@xg_or_not` previously
@@ -42,7 +52,12 @@ workflow — there is no in-process scheduler and no live bot process; see
   plus `build_image_prompt()`, which turns a headline into the prompt sent
   to the image generator. The prompt explicitly tells the model *not* to
   render text — diffusion models draw text illegibly, so the headline is
-  drawn separately afterward.
+  drawn separately afterward. Also explicitly demands a real photo, not an
+  illustration — free image models default toward a painterly/stylized
+  look unless told "НЕ рисунок, НЕ мультфильм, НЕ 3D-рендер" etc.; even
+  with that, expect an occasional off-topic result (Pollinations has no
+  seed pinning) — that's an accepted quality trade-off of a free
+  generator, not something worth building a verify-and-retry loop for.
 - `news_parser.py` — parses the configured RSS feeds and filters out
   anything already in `data/published_history.json` (dedup by link).
   History is `{link: iso_timestamp}`; old runs may have left a plain list
@@ -90,13 +105,25 @@ workflow — there is no in-process scheduler and no live bot process; see
   occupied" on the second/third send. Reproduced live against the real
   channel before the fix — the first attempt silently published nothing.
 - **Telegram `parse_mode="HTML"` requires escaping `&`, `<`, `>` in
-  *everything* embedded in the caption, including the link.** RSS links
-  almost always contain `&` in query strings (`?utm_source=rss&...`), so
-  skipping `html.escape()` on title/summary/link fails on most real
-  articles, not just edge cases. The truncation logic (for the 1024-char
+  *everything* embedded in the caption.** `html.escape()` on title/summary
+  before building the caption; the truncation logic (for the 1024-char
   caption limit) escapes first, then strips any trailing partial entity
   left by the cut (`&amp` without `;`) with a regex — truncating
-  post-escape text naively can leave a dangling invalid entity.
+  post-escape text naively can leave a dangling invalid entity. (Captions
+  no longer include the source link at all — dropped by requirement — but
+  the escaping lesson generalizes to any text field, keep it.)
+- **`os.environ.get(key, default)` does not protect you on GitHub
+  Actions.** An unset repository Secret/Variable referenced as
+  `${{ secrets.X }}` / `${{ vars.X }}` in a workflow's `env:` block
+  resolves to an *empty string*, not an absent key — so the env var
+  arrives in the runner as `X=""`, present but empty. `.get(key, default)`
+  only falls back when the key is missing entirely, so it silently returns
+  `""` instead of `default`. Caught this live: `int(os.environ.get(
+  "MAX_NEWS_PER_RUN", "3"))` crashed the very first cloud run with
+  `ValueError: invalid literal for int() with base 10: ''`, and the same
+  pattern in `brand_config.py` would have broken image generation the
+  same way once those (never-created) repo Variables were referenced.
+  Fix used throughout both files: `os.environ.get(key) or default`.
 
 ## No live Telegram buttons — architecture constraint, not an oversight
 
