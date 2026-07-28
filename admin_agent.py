@@ -275,7 +275,16 @@ async def run() -> None:
                 if query.message is None or query.message.chat_id != admin_chat_id:
                     continue
                 try:
-                    await query.answer()  # убирает "часики" на кнопке в Telegram
+                    # Ответ на нажатие ("часики" исчезают) годен недолго — Telegram
+                    # отклоняет answer() с "query is too old", если между нажатием и
+                    # опросом (раз в 5 минут) прошло больше минуты. Само действие
+                    # это не должно останавливать — query.data всё ещё рабочий,
+                    # поэтому answer() — best-effort и в отдельном try, а не первым
+                    # шагом внутри общего try, который раньше обрывал всё нажатие.
+                    try:
+                        await query.answer()
+                    except Exception:
+                        pass
                     await _handle_callback(bot, admin_chat_id, query.data)
                 except Exception as e:
                     print(f"Не удалось обработать нажатие кнопки: {e}")
