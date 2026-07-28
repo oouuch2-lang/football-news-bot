@@ -1,0 +1,26 @@
+name: Статистика канала
+
+on:
+  workflow_dispatch:  # кнопка "Run workflow" на вкладке Actions — заменяет живую Telegram-кнопку "Статистика"
+
+jobs:
+  send-stats:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Забрать код репозитория
+        uses: actions/checkout@v4
+
+      - name: Установить Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Установить зависимости
+        run: pip install -r requirements.txt
+
+      - name: Прислать статистику
+        env:
+          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+          CHANNEL_ID: ${{ secrets.CHANNEL_ID }}
+          ADMIN_CHAT_ID: ${{ secrets.ADMIN_CHAT_ID }}
+        run: python stats.py

@@ -1,0 +1,5 @@
+feedparser
+requests
+python-telegram-bot>=20,<21
+Pillow>=10
+python-dotenv

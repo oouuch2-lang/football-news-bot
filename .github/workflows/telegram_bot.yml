@@ -1,0 +1,55 @@
+name: Публикация спортивных новостей
+
+on:
+  schedule:
+    - cron: "0 * * * *"  # каждый час
+  workflow_dispatch:  # ручной запуск из вкладки Actions на GitHub
+
+permissions:
+  contents: write  # нужно, чтобы бот мог закоммитить обновлённую историю публикаций
+
+jobs:
+  post-news:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Забрать код репозитория
+        uses: actions/checkout@v4
+
+      - name: Установить Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Установить зависимости
+        run: pip install -r requirements.txt
+
+      - name: Запустить бота
+        env:
+          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+          CHANNEL_ID: ${{ secrets.CHANNEL_ID }}
+          RSS_URLS: ${{ secrets.RSS_URLS }}
+          MAX_NEWS_PER_RUN: ${{ vars.MAX_NEWS_PER_RUN }}
+          IMAGE_PROVIDER: ${{ vars.IMAGE_PROVIDER }}
+          HUGGINGFACE_API_KEY: ${{ secrets.HUGGINGFACE_API_KEY }}
+          HUGGINGFACE_MODEL: ${{ vars.HUGGINGFACE_MODEL }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GEMINI_MODEL: ${{ vars.GEMINI_MODEL }}
+          BRAND_PRIMARY_COLOR: ${{ vars.BRAND_PRIMARY_COLOR }}
+          BRAND_BACKGROUND_COLOR: ${{ vars.BRAND_BACKGROUND_COLOR }}
+          BRAND_TEXT_COLOR: ${{ vars.BRAND_TEXT_COLOR }}
+          BRAND_IMAGE_STYLE: ${{ vars.BRAND_IMAGE_STYLE }}
+        run: python main.py
+
+      - name: Сохранить историю опубликованных новостей
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add data/published_history.json
+          if git diff --cached --quiet; then
+            echo "История не изменилась, коммитить нечего"
+          else
+            git commit -m "Обновить историю опубликованных новостей"
+            git push
+          fi
